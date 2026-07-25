@@ -1,0 +1,11 @@
+[Interface]
+PrivateKey = <GERMANY_PRIVATE_KEY>
+Address = 10.20.20.2/30
+ListenPort = 443
+MTU = 1280
+
+[Peer]
+PublicKey = <IRAN_PUBLIC_KEY>
+Endpoint = <IRAN_PUBLIC_IP>:443
+AllowedIPs = 10.20.20.1/32
+PersistentKeepalive = 15
