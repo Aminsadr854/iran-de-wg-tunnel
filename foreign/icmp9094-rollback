@@ -1,0 +1,4 @@
+#!/bin/bash
+set -u
+systemctl disable --now wg-quick@wg9094.service 2>/dev/null || true
+systemctl disable --now udp2raw-wg9094.service 2>/dev/null || true

@@ -1,0 +1,11 @@
+# Production secrets and generated state
+*.private
+*.key
+*.psk
+*.secret
+.env
+config.json
+config.json.*
+*.pcap
+*.log
+*.pid

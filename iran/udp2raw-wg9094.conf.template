@@ -1,0 +1,9 @@
+-c
+-l 127.0.0.1:51895
+-r <FOREIGN_PUBLIC_IP>:42094
+-k <FRESH_UDP2RAW_SECRET>
+--raw-mode icmp
+--cipher-mode aes128cbc
+--auth-mode hmac_sha1
+--log-level 4
+--dev eth0

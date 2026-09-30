@@ -1,0 +1,14 @@
+[Unit]
+Description=TCP and UDP Iran port 9094 forwarding through wg9094
+Requires=wg-quick@wg9094.service
+After=network-online.target wg-quick@wg9094.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/icmp9094-relay start
+ExecStop=/usr/local/sbin/icmp9094-relay stop
+
+[Install]
+WantedBy=multi-user.target

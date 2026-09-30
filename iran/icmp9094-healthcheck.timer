@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic wg9094 health check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Unit=icmp9094-healthcheck.service
+
+[Install]
+WantedBy=timers.target

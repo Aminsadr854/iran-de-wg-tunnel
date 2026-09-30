@@ -1,0 +1,9 @@
+-s
+-l 0.0.0.0:42094
+-r 127.0.0.1:51894
+-k <FRESH_UDP2RAW_SECRET>
+--raw-mode icmp
+--cipher-mode aes128cbc
+--auth-mode hmac_sha1
+--log-level 4
+--dev eth0

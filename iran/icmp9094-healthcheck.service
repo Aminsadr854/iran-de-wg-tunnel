@@ -1,0 +1,6 @@
+[Unit]
+Description=Check wg9094 end-to-end reachability
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/icmp9094-healthcheck

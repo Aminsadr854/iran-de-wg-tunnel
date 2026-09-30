@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euo pipefail
+STATE=/run/icmp9094-health-failures
+
+if systemctl is-active --quiet udp2raw-wg9094.service &&
+   systemctl is-active --quiet wg-quick@wg9094.service &&
+   ping -n -q -I wg9094 -c 1 -W 3 10.77.94.2 >/dev/null 2>&1; then
+  echo 0 > "$STATE"
+  exit 0
+fi
+
+n=0
+[ -f "$STATE" ] && read -r n < "$STATE" || true
+n=$((n + 1))
+echo "$n" > "$STATE"
+logger -t icmp9094-health "tunnel health failure $n/3"
+
+if [ "$n" -ge 3 ]; then
+  logger -t icmp9094-health 'three consecutive failures; restarting carrier, WireGuard, and relay'
+  systemctl stop icmp9094-relay.service 2>/dev/null || true
+  systemctl stop wg-quick@wg9094.service 2>/dev/null || true
+  systemctl restart udp2raw-wg9094.service
+  sleep 2
+  systemctl start wg-quick@wg9094.service
+  systemctl start icmp9094-relay.service
+  echo 0 > "$STATE"
+fi

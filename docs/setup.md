@@ -1,132 +1,120 @@
-# Setup Guide
+# Reproduce the port 9094 tunnel
 
-Reproduces the Iran ↔ Germany WireGuard-over-udp2raw tunnel with port 9093
-forwarding.
+This guide reproduces the isolated deployment described in the repository
+README. It does not install or change an Xray/SS service. The Foreign endpoint
+must separately have an application listening on `10.77.94.2:9094` for
+application traffic to work.
 
-## Prerequisites
+## Values and paths
 
-- Two servers, referred to below as `IRAN` and `DE`.
-- Root SSH access to both.
-- Ubuntu/Debian (tested on Ubuntu 22.04). Adjust package manager commands for
-  other distros.
+| Item | Iran | Foreign |
+|---|---|---|
+| Public address | `91.108.146.222` | `2.31.14.109` |
+| WireGuard interface/address | `wg9094`, `10.77.94.1/30` | `wg9094`, `10.77.94.2/30` |
+| WG carrier UDP endpoint | local udp2raw client `127.0.0.1:51895` | local WG listener `127.0.0.1:51894` |
+| udp2raw carrier | client to Foreign `:42094` | ICMP server on `:42094` |
+| Inner service | forwards TCP+UDP `:9094` | application must listen on `10.77.94.2:9094` |
 
-## 1. Install WireGuard on both servers
+WireGuard MTU is 900. Only `10.77.94.2/32` is routed through WireGuard;
+neither host's default route is changed.
+
+## Install and compile udp2raw
+
+On both Ubuntu hosts:
 
 ```bash
-apt-get update -qq && apt-get install -y wireguard
+apt-get update
+apt-get install -y wireguard-tools build-essential git
+git clone https://github.com/wangyu-/udp2raw-tunnel.git /usr/local/src/udp2raw-icmp9094
+cd /usr/local/src/udp2raw-icmp9094
+git checkout 4208db6e27c46f3ccec8b98722af7ec23bc62e73
+make -j2
+install -o root -g root -m 0755 udp2raw /usr/local/sbin/udp2raw-wg9094
 ```
 
-## 2. Generate keys
+The deployed build was compiled from this commit on each host. This revision
+uses ICMP mode, AES-128-CBC, HMAC-SHA1, and a fresh random carrier secret.
+Generate a new carrier secret for a new deployment; do not put it in Git.
 
-On each server:
+## Generate and install WireGuard configuration
 
-```bash
-umask 077
-wg genkey | tee privatekey | wg pubkey > publickey
-```
+Generate distinct private keys on each server and a single shared WireGuard
+PSK. Keep the private keys and PSK in root-only files. Fill the placeholders
+in `iran/wg9094.conf.template` and `foreign/wg9094.conf.template`, install as
+`/etc/wireguard/wg9094.conf`, and set mode `0600`.
 
-Note the private/public key of each side — you'll need DE's public key on
-IRAN's config and vice versa.
+Generate the udp2raw secret separately and fill the matching placeholder in
+both udp2raw templates. Install as `/etc/udp2raw/wg9094.conf`, mode `0600`.
+The udp2raw config file syntax is one complete option per line, with its value
+on that same line where needed.
 
-## 3. Download and install udp2raw on both servers
+Install `udp2raw-wg9094.service` to
+`/etc/systemd/system/udp2raw-wg9094.service` on both hosts. Install the
+corresponding `wg-quick-udp2raw.conf` as
+`/etc/systemd/system/wg-quick@wg9094.service.d/udp2raw.conf`.
 
-```bash
-cd /tmp
-wget -q https://github.com/wangyu-/udp2raw/releases/download/20230206.0/udp2raw_binaries.tar.gz
-tar -xzf udp2raw_binaries.tar.gz
-mv udp2raw_amd64 /usr/local/bin/udp2raw
-chmod +x /usr/local/bin/udp2raw
-rm -f udp2raw_* udp2raw_binaries.tar.gz version.txt
-```
-
-Adjust the binary name for your architecture if not `amd64`.
-
-## 4. Generate a shared secret for udp2raw
+Start Foreign first, then Iran:
 
 ```bash
-openssl rand -hex 24
-```
-
-Use the same value in both `udp2raw-client.service` (Iran) and
-`udp2raw-server.service` (Germany), replacing `<SHARED_SECRET>`.
-
-## 5. Deploy WireGuard configs
-
-- Copy `germany/wg0.conf.template` to `/etc/wireguard/wg0.conf` on DE,
-  filling in DE's private key and Iran's public key.
-- Copy `iran/wg0.conf.template` to `/etc/wireguard/wg0.conf` on IRAN, filling
-  in Iran's private key and Germany's public key.
-- `chmod 600 /etc/wireguard/wg0.conf` on both.
-
-Note: Iran's `Endpoint` points to `127.0.0.1:4097` — WireGuard on Iran talks
-to the local udp2raw client, not directly to Germany. Germany's `Endpoint`
-points to Iran's real public IP:443, but since Iran initiates the connection
-through udp2raw, this value mostly matters for the initial expected peer
-address bookkeeping.
-
-## 6. Deploy udp2raw systemd services
-
-- Copy `germany/udp2raw-server.service` to `/etc/systemd/system/udp2raw.service` on DE.
-- Copy `iran/udp2raw-client.service` to `/etc/systemd/system/udp2raw.service` on IRAN.
-- Fill in `<GERMANY_PUBLIC_IP>` and `<SHARED_SECRET>` in the Iran service file.
-- Fill in `<SHARED_SECRET>` in the Germany service file.
-
-Start order matters — bring up the server (Germany) side first:
-
-```bash
-# On Germany:
 systemctl daemon-reload
-systemctl enable --now udp2raw
+systemctl enable --now udp2raw-wg9094.service
+systemctl enable --now wg-quick@wg9094.service
+```
 
-# On Iran:
+## Enable Iran TCP+UDP port forwarding
+
+On Iran, install `iran/icmp9094-relay` as
+`/usr/local/sbin/icmp9094-relay` (mode `0700`) and
+`iran/icmp9094-relay.service` as
+`/etc/systemd/system/icmp9094-relay.service`. The unit adds only specific
+DNAT, SNAT, and forwarding rules for public `:9094`; it saves the original
+`net.ipv4.ip_forward` value and restores it when stopped.
+
+```bash
 systemctl daemon-reload
-systemctl enable --now udp2raw
+systemctl enable --now icmp9094-relay.service
 ```
 
-## 7. Start WireGuard
+Install and enable `iran/icmp9094-healthcheck`,
+`iran/icmp9094-healthcheck.service`, and
+`iran/icmp9094-healthcheck.timer` at their corresponding `/usr/local/sbin`
+and `/etc/systemd/system` paths. The timer probes once per minute after a
+two-minute boot grace; three consecutive failures trigger recovery.
+
+## Verify transport and routing
 
 ```bash
-# On Germany:
-systemctl enable --now wg-quick@wg0
+# On Iran
+wg show wg9094
+ping -I wg9094 -c 5 10.77.94.2
+ip route get 2.31.14.109
+iptables -t nat -vnL PREROUTING
 
-# On Iran:
-systemctl enable --now wg-quick@wg0
+# Capture the outer ICMP carrier on eth0 and the inner service packets on wg9094
+tcpdump -ni eth0 icmp
+tcpdump -ni wg9094 'tcp port 9094 or udp port 9094'
 ```
 
-## 8. Verify the tunnel
+The route to Foreign's public IP must use Iran's physical interface/default
+gateway. Do not add a WireGuard default route. The peer endpoint is protected
+by the udp2raw shared secret and the WireGuard key pair/PSK.
 
-On Iran:
+An echo server can verify TCP+UDP forwarding, but this is only an L4 test. For
+Shadowsocks acceptance, the Foreign application must listen on
+`10.77.94.2:9094` and the test client must connect to Iran public `:9094`.
+
+## Rollback
+
+Keep a snapshot of `ip addr`, all route tables/rules, `iptables-save`,
+`nft list ruleset`, systemd units, and existing application configuration
+before deployment. The deployed rollback scripts are included here:
 
 ```bash
-wg show
-ping -c 5 10.20.20.2
+# Run on Iran, then on Foreign
+/usr/local/sbin/icmp9094-rollback
 ```
 
-You should see a recent handshake and low packet loss. If you see 100% loss,
-restart both `udp2raw` services (server first, then client) followed by both
-`wg-quick@wg0` services — the underlying faketcp connection state can get out
-of sync after config changes.
-
-## 9. Enable forwarding and NAT rules (Iran only)
-
-```bash
-bash iran/sysctl-forwarding.sh
-bash iran/iptables-rules.sh
-apt-get install -y iptables-persistent
-netfilter-persistent save
-```
-
-## 10. Test end-to-end
-
-From any external machine:
-
-```bash
-# TCP
-timeout 5 bash -c '</dev/tcp/<IRAN_PUBLIC_IP>/9093' && echo OK
-
-# UDP
-echo test | nc -u -w2 <IRAN_PUBLIC_IP> 9093
-```
-
-Check `iptables -t nat -L PREROUTING -n -v` on Iran — the packet counters on
-the DNAT rules should increment.
+Iran rollback removes only the `:9094` NAT/filter rules, restores the saved
+`ip_forward` value, and disables the dedicated tunnel units. Foreign rollback
+disables its dedicated WireGuard and udp2raw units. Neither script removes
+Xray, Docker, SSH, or unrelated firewall rules.
