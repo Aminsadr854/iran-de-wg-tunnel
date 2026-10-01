@@ -1,6 +1,0 @@
-[Unit]
-Description=Check multi-carrier wg9094/9095/9096 end-to-end reachability
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/icmp9094-healthcheck

@@ -1,0 +1,13 @@
+# Security model
+
+WireGuard supplies peer authentication and encryption. The udp2raw ICMP layer uses the production settings `xor/simple`; neither is relied upon for confidentiality. ICMP transport can be detected, shaped, blocked or altered by network operators. No undetectability, unblockability or censorship-resistance guarantee is made.
+
+Foreign bootstrap generates independent keys for both roles, independent PSKs and 256-bit random raw secrets per carrier. It retains only its own WireGuard private keys in runtime state, plus a protected export bundle holding Iran identities. Export omits Foreign private keys. The bootstrap simplifies one-way setup; it requires trusting Foreign with Iran's initial identity. Compromise of that retained bundle requires replacing the pair's credentials. Pairing is not a public token and should never be posted to an issue.
+
+All generated configuration is root-owned, directories 0700, secret files/backups 0600. Public configuration is allowlisted data, never sourced/evaluated. Imports require restrictive permissions, regular non-symlink files, bounded JSON and exact carrier layouts/key formats. Backup restore whitelists archive members and reads their contents without extracting paths. Exports refuse Git directories and unsafe/overwritten destinations.
+
+Commands pass secret material to `wg pubkey` via stdin and to udp2raw through its protected config file rather than argv. WireGuard private keys are not embedded in systemd units. Upstream udp2raw can print parsed configuration; raw service output is suppressed, and management logs redact actual state/pair credentials plus common key/password/token patterns. Diagnostics choose explicit non-secret WireGuard fields, never `wg show ... dump` or `showconf`. Public IPs, interface names and topology still need review before sharing. This is defense in depth; do not paste raw configurations or external service logs.
+
+Network/firewall operations are project-scoped. Packages are sourced from the distro; udp2raw source is pinned to the production commit and its Git hash verified before native compilation. This does not replace an upstream code/dependency vulnerability audit. Kernel/OS updates remain the administrator's responsibility.
+
+Report an exposure without sending secret values. Rotate all affected production credentials if they have been committed or shared. Removing a file in a later commit is not a remedy for a historical credential exposure; sanitize history with a private backup and coordinate repository caches/forks when necessary. The Release 2 repository audit found no actual committed credentials; see [audit scope/results](security-audit.md).

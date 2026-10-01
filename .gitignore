@@ -1,24 +1,23 @@
-# Production secrets and generated state
-*.private
+# Generated credentials and environment-specific artifacts
+*.env
+!config.example.env
 *.key
 *.psk
 *.secret
-*.save
-.env
-config.json
-config.json.*
-
-# Temporary, debug, capture, and log files
-*.pcap
+*.pem
+*.conf
+peer*.json
+pair*.json
+state.json
+*.backup*
+*.tar*
+backups/
+diagnostics*
 *.log
-*.pid
+*.pcap
+*.pcapng
 *.tmp
-*.zip
-
-# Benchmark, telemetry, and migration scratch files
-benchmark_suite.py
-stability_telemetry.py
-iran-9094-relay.sh
-/backup-*/
-/golden-*/
-/deploy-*/
+.env*
+runtime/
+__pycache__/
+*.pyc

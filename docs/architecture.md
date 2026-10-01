@@ -1,0 +1,15 @@
+# Architecture and invariants
+
+The Foreign application's Internet access is supplied by that application. The tunnel is a bidirectional TCP/UDP **port relay**, preserving the production design, not an IP gateway installed over the global default route.
+
+Each of three carriers has an independent WireGuard identity on each endpoint, PSK, udp2raw random secret, raw ICMP identifier/socket reservation, local WireGuard UDP port, `/30` address pair and two owned systemd units. Names are `wg9094`, `wg9095`, `wg9096`. Public setup parameters travel with the protected pairing bundle; Iran uses Foreign's exact layout.
+
+Iran NAT PREROUTING invokes a project chain for locally addressed packets arriving through the selected physical interface. TCP SYN packets and the first UDP packet choose a destination using the proven `statistic --mode nth --every 3`, then `--every 2`, then final destination. NAT is evaluated for the first packet of a conntrack flow; later packets use its stored DNAT mapping. This is connection/flow affinity, not per-packet balancing. UDP timeout can create a new conntrack flow and a different selection. Distribution is approximate across concurrent arrivals, not guaranteed equal bytes.
+
+Targeted SNAT to the Iran carrier IP makes the Foreign application's reply use the matching `/30` route. Only that peer `/32` is authorized in WireGuard. `Table=off` prevents wg-quick from adding broad routes; assigning the `/30` supplies its connected route. SSH/management and the outer ICMP packets keep the host's physical routing. Preflight rejects existing subnet overlaps and recursive peer routing. No policy-routing rule or global default route needs to be added.
+
+Raw mode is `icmp`; cipher/auth are `xor/simple`; logging level 2; socket buffer 10240 with force enabled. These transport settings and MTU 900 match the proven baseline. Outer packets use physical source IP/interface and one fixed source identifier per carrier. ICMP carries no real destination port; carrier keys/identifiers isolate the processes. Kernel Echo replies are suppressed by a narrow u32 identifier match in owned INPUT rules, after raw packet sockets receive the traffic. Ordinary ping identifiers are unaffected. See [pinned upstream networking implementation](https://github.com/wangyu-/udp2raw-tunnel/blob/4208db6e27c46f3ccec8b98722af7ec23bc62e73/network.cpp).
+
+The firewall has no global terminal DROP and never flushes host chains. Own-chain rebuilds are idempotent; hooks are checked before insertion and marked `icmp-tunnel-owned`. MSS clamping applies only through carrier interfaces. Active independent firewall managers are rejected because they may erase these rules on reload or evaluate competing hooks.
+
+udp2raw services are independent and restart on failure with bounded systemd bursts. WireGuard Wants/After its own raw service and Requires the firewall; a raw crash does not tear down WireGuard or other carriers. Firewall startup precedes all carriers, including after reboot. Health probes use each interface independently. Existing-flow failover and dynamically withdrawing dead carriers are deliberately outside this release's proven design.
