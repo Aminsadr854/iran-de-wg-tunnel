@@ -1,13 +1,13 @@
 [Unit]
-Description=udp2raw ICMP carrier for wg9094
+Description=udp2raw ICMP carrier for wg9095
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-CPUAffinity=0
+CPUAffinity=1
 Nice=-10
 Type=simple
-ExecStart=/usr/local/sbin/udp2raw-wg9094 --conf-file /etc/udp2raw/wg9094.conf
+ExecStart=/usr/local/sbin/udp2raw-wg9094 --conf-file /etc/udp2raw/wg9095.conf
 Restart=always
 RestartSec=5
 LimitNOFILE=65535

@@ -1,0 +1,139 @@
+#!/bin/bash
+# Multi-Carrier ICMP Tunnel Port Relay (Iran Gateway)
+# Balances incoming flows across 3 WireGuard/udp2raw carriers with strict TCP flow affinity.
+
+set -euo pipefail
+IPT=/usr/sbin/iptables
+
+action="${1:-start}"
+PORT="${TUNNEL_PORT:-9094}"
+
+# Detect default interface and public IP if not explicitly set
+DEFAULT_IFACE="$(ip -4 route show default | awk '{print $5}' | head -n 1)"
+DEFAULT_IFACE="${DEFAULT_IFACE:-eth0}"
+PUBLIC_IP="${PUBLIC_IP:-$(ip -4 addr show dev "$DEFAULT_IFACE" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)}"
+
+CARRIERS=(
+  "wg9094:10.77.94.1:10.77.94.2"
+  "wg9095:10.77.95.1:10.77.95.2"
+  "wg9096:10.77.96.1:10.77.96.2"
+)
+
+add_rules() {
+  echo "Applying multi-carrier relay rules on $DEFAULT_IFACE ($PUBLIC_IP:$PORT)..."
+
+  # 1. DNAT Chain for incoming traffic
+  $IPT -t nat -N WG9094_DNAT 2>/dev/null || true
+  $IPT -t nat -F WG9094_DNAT
+
+  $IPT -t nat -C PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p tcp --dport "$PORT" -j WG9094_DNAT 2>/dev/null || \
+    $IPT -t nat -A PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p tcp --dport "$PORT" -j WG9094_DNAT
+  $IPT -t nat -C PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p udp --dport "$PORT" -j WG9094_DNAT 2>/dev/null || \
+    $IPT -t nat -A PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p udp --dport "$PORT" -j WG9094_DNAT
+
+  # Connection-level balancing across 3 carriers for TCP SYN
+  $IPT -t nat -A WG9094_DNAT -p tcp --dport "$PORT" --syn -m statistic --mode nth --every 3 --packet 0 -j DNAT --to-destination 10.77.94.2:"$PORT"
+  $IPT -t nat -A WG9094_DNAT -p tcp --dport "$PORT" --syn -m statistic --mode nth --every 2 --packet 0 -j DNAT --to-destination 10.77.95.2:"$PORT"
+  $IPT -t nat -A WG9094_DNAT -p tcp --dport "$PORT" --syn -j DNAT --to-destination 10.77.96.2:"$PORT"
+
+  # Fallback for non-SYN TCP
+  $IPT -t nat -A WG9094_DNAT -p tcp --dport "$PORT" -j DNAT --to-destination 10.77.94.2:"$PORT"
+
+  # UDP flow distribution
+  $IPT -t nat -A WG9094_DNAT -p udp --dport "$PORT" -m statistic --mode nth --every 3 --packet 0 -j DNAT --to-destination 10.77.94.2:"$PORT"
+  $IPT -t nat -A WG9094_DNAT -p udp --dport "$PORT" -m statistic --mode nth --every 2 --packet 0 -j DNAT --to-destination 10.77.95.2:"$PORT"
+  $IPT -t nat -A WG9094_DNAT -p udp --dport "$PORT" -j DNAT --to-destination 10.77.96.2:"$PORT"
+
+  # 2. SNAT Chain for outbound tunnel packets
+  $IPT -t nat -N WG9094_SNAT 2>/dev/null || true
+  $IPT -t nat -F WG9094_SNAT
+
+  for c in "${CARRIERS[@]}"; do
+    dev="${c%%:*}"
+    rest="${c#*:}"
+    local_ip="${rest%%:*}"
+    $IPT -t nat -C POSTROUTING -o "$dev" -j WG9094_SNAT 2>/dev/null || \
+      $IPT -t nat -A POSTROUTING -o "$dev" -j WG9094_SNAT
+    $IPT -t nat -A WG9094_SNAT -o "$dev" -j SNAT --to-source "$local_ip"
+  done
+
+  # 3. FORWARD Chain filtering
+  $IPT -N WG9094_FWD 2>/dev/null || true
+  $IPT -F WG9094_FWD
+  $IPT -C FORWARD -j WG9094_FWD 2>/dev/null || $IPT -I FORWARD 1 -j WG9094_FWD
+
+  for c in "${CARRIERS[@]}"; do
+    dev="${c%%:*}"
+    $IPT -A WG9094_FWD -i "$DEFAULT_IFACE" -o "$dev" -p tcp --dport "$PORT" -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT
+    $IPT -A WG9094_FWD -i "$DEFAULT_IFACE" -o "$dev" -p udp --dport "$PORT" -j ACCEPT
+    $IPT -A WG9094_FWD -i "$dev" -o "$DEFAULT_IFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  done
+  $IPT -A WG9094_FWD -j DROP
+
+  # 4. TCP MSS clamping to PMTU
+  $IPT -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+    $IPT -t mangle -I FORWARD 1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
+  echo "Relay rules successfully applied."
+}
+
+remove_rules() {
+  echo "Removing multi-carrier relay rules..."
+
+  # Remove PREROUTING hooks
+  $IPT -t nat -D PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p tcp --dport "$PORT" -j WG9094_DNAT 2>/dev/null || true
+  $IPT -t nat -D PREROUTING -i "$DEFAULT_IFACE" -d "$PUBLIC_IP" -p udp --dport "$PORT" -j WG9094_DNAT 2>/dev/null || true
+  $IPT -t nat -F WG9094_DNAT 2>/dev/null || true
+  $IPT -t nat -X WG9094_DNAT 2>/dev/null || true
+
+  # Remove POSTROUTING hooks
+  for c in "${CARRIERS[@]}"; do
+    dev="${c%%:*}"
+    $IPT -t nat -D POSTROUTING -o "$dev" -j WG9094_SNAT 2>/dev/null || true
+  done
+  $IPT -t nat -F WG9094_SNAT 2>/dev/null || true
+  $IPT -t nat -X WG9094_SNAT 2>/dev/null || true
+
+  # Remove FORWARD hooks
+  $IPT -D FORWARD -j WG9094_FWD 2>/dev/null || true
+  $IPT -F WG9094_FWD 2>/dev/null || true
+  $IPT -X WG9094_FWD 2>/dev/null || true
+
+  # Remove TCPMSS hook
+  $IPT -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
+  echo "Relay rules successfully removed."
+}
+
+status_rules() {
+  echo "=== DNAT Rules ==="
+  $IPT -t nat -S WG9094_DNAT 2>/dev/null || echo "WG9094_DNAT not found"
+  echo "=== SNAT Rules ==="
+  $IPT -t nat -S WG9094_SNAT 2>/dev/null || echo "WG9094_SNAT not found"
+  echo "=== FORWARD Rules ==="
+  $IPT -S WG9094_FWD 2>/dev/null || echo "WG9094_FWD not found"
+  echo "=== TCPMSS Rule ==="
+  $IPT -t mangle -S FORWARD 2>/dev/null | grep TCPMSS || echo "TCPMSS clamp not active"
+}
+
+case "$action" in
+  start)
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+    add_rules
+    ;;
+  stop)
+    remove_rules
+    ;;
+  restart)
+    remove_rules
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+    add_rules
+    ;;
+  status)
+    status_rules
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status}" >&2
+    exit 2
+    ;;
+esac

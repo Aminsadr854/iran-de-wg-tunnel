@@ -1,27 +1,41 @@
 #!/bin/bash
+# Multi-Carrier ICMP Tunnel Health Monitor (Iran Gateway)
+# Probes each WireGuard carrier independently. Auto-heals degraded carriers.
+
 set -euo pipefail
-STATE=/run/icmp9094-health-failures
 
-if systemctl is-active --quiet udp2raw-wg9094.service &&
-   systemctl is-active --quiet wg-quick@wg9094.service &&
-   ping -n -q -I wg9094 -c 1 -W 3 10.77.94.2 >/dev/null 2>&1; then
-  echo 0 > "$STATE"
-  exit 0
-fi
+STATE_DIR=/run/icmp9094-health
+mkdir -p "$STATE_DIR"
 
-n=0
-[ -f "$STATE" ] && read -r n < "$STATE" || true
-n=$((n + 1))
-echo "$n" > "$STATE"
-logger -t icmp9094-health "tunnel health failure $n/3"
+CARRIERS=(
+  "wg9094:10.77.94.2"
+  "wg9095:10.77.95.2"
+  "wg9096:10.77.96.2"
+)
 
-if [ "$n" -ge 3 ]; then
-  logger -t icmp9094-health 'three consecutive failures; restarting carrier, WireGuard, and relay'
-  systemctl stop icmp9094-relay.service 2>/dev/null || true
-  systemctl stop wg-quick@wg9094.service 2>/dev/null || true
-  systemctl restart udp2raw-wg9094.service
-  sleep 2
-  systemctl start wg-quick@wg9094.service
-  systemctl start icmp9094-relay.service
-  echo 0 > "$STATE"
-fi
+for c in "${CARRIERS[@]}"; do
+  dev="${c%%:*}"
+  peer_ip="${c#*:}"
+  state_file="$STATE_DIR/$dev.failures"
+
+  if systemctl is-active --quiet "udp2raw-$dev.service" && \
+     systemctl is-active --quiet "wg-quick@$dev.service" && \
+     ping -n -q -I "$dev" -c 1 -W 3 "$peer_ip" >/dev/null 2>&1; then
+    echo 0 > "$state_file"
+  else
+    n=0
+    [ -f "$state_file" ] && read -r n < "$state_file" || true
+    n=$((n + 1))
+    echo "$n" > "$state_file"
+    logger -t icmp9094-health "Carrier $dev health failure $n/3 (target $peer_ip)"
+
+    if [ "$n" -ge 3 ]; then
+      logger -t icmp9094-health "Carrier $dev failed 3 times; restarting udp2raw-$dev and wg-quick@$dev"
+      systemctl stop "wg-quick@$dev.service" 2>/dev/null || true
+      systemctl restart "udp2raw-$dev.service"
+      sleep 2
+      systemctl start "wg-quick@$dev.service"
+      echo 0 > "$state_file"
+    fi
+  fi
+done

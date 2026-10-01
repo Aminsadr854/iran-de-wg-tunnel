@@ -1,6 +1,22 @@
 #!/bin/bash
+# Multi-Carrier Tunnel Rollback Script (Iran Gateway)
+# Safely disables relay and stops tunnel services without affecting unrelated services.
+
 set -u
+
+echo "Stopping and disabling relay service..."
+systemctl disable --now iran-9094-relay.service 2>/dev/null || true
 systemctl disable --now icmp9094-relay.service 2>/dev/null || true
-/usr/local/sbin/icmp9094-relay stop 2>/dev/null || true
-systemctl disable --now wg-quick@wg9094.service 2>/dev/null || true
-systemctl disable --now udp2raw-wg9094.service 2>/dev/null || true
+/usr/local/sbin/iran-9094-relay stop 2>/dev/null || true
+
+echo "Stopping health check timer..."
+systemctl disable --now icmp9094-healthcheck.timer 2>/dev/null || true
+
+echo "Stopping WireGuard and udp2raw carriers..."
+for dev in wg9094 wg9095 wg9096; do
+  systemctl disable --now "wg-quick@$dev.service" 2>/dev/null || true
+  systemctl disable --now "udp2raw-$dev.service" 2>/dev/null || true
+  ip link delete "$dev" 2>/dev/null || true
+done
+
+echo "Rollback complete."

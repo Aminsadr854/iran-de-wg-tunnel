@@ -1,0 +1,19 @@
+[Unit]
+Description=udp2raw ICMP carrier for wg9096
+Wants=network-online.target
+After=network-online.target
+Before=wg-quick@wg9096.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/udp2raw-wg9094 --conf-file /etc/udp2raw/wg9096.conf
+Restart=always
+RestartSec=5s
+User=root
+LimitNOFILE=65536
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

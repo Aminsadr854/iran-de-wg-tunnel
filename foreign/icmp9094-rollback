@@ -1,4 +1,14 @@
 #!/bin/bash
+# Multi-Carrier Tunnel Rollback Script (Foreign/Germany Host)
+# Safely stops Foreign tunnel carrier services without affecting unrelated services.
+
 set -u
-systemctl disable --now wg-quick@wg9094.service 2>/dev/null || true
-systemctl disable --now udp2raw-wg9094.service 2>/dev/null || true
+
+echo "Stopping WireGuard and udp2raw carriers..."
+for dev in wg9094 wg9095 wg9096; do
+  systemctl disable --now "wg-quick@$dev.service" 2>/dev/null || true
+  systemctl disable --now "udp2raw-$dev.service" 2>/dev/null || true
+  ip link delete "$dev" 2>/dev/null || true
+done
+
+echo "Foreign rollback complete."

@@ -1,75 +1,11 @@
 #!/bin/bash
-set -euo pipefail
-
-action="${1:-start}"
-PUBLIC_IP=91.108.146.222
-WG_LOCAL=10.77.94.1
-WG_PEER=10.77.94.2
-
-add_rule() {
-  local table="$1" chain="$2"; shift 2
-  iptables -w -t "$table" -C "$chain" "$@" >/dev/null 2>&1 ||
-    iptables -w -t "$table" -I "$chain" 1 "$@"
-}
-
-del_rule() {
-  local table="$1" chain="$2"; shift 2
-  while iptables -w -t "$table" -C "$chain" "$@" >/dev/null 2>&1; do
-    iptables -w -t "$table" -D "$chain" "$@"
-  done
-}
-
-add_rules() {
-  for proto in tcp udp; do
-    add_rule nat PREROUTING -i eth0 -d "$PUBLIC_IP"/32 -p "$proto" --dport 9094 \
-      -j DNAT --to-destination "$WG_PEER":9094
-    add_rule nat POSTROUTING -o wg9094 -d "$WG_PEER"/32 -p "$proto" --dport 9094 \
-      -j SNAT --to-source "$WG_LOCAL"
-  done
-  add_rule filter FORWARD -i eth0 -o wg9094 -d "$WG_PEER"/32 -p tcp --dport 9094 \
-    -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-  add_rule filter FORWARD -i eth0 -o wg9094 -d "$WG_PEER"/32 -p udp --dport 9094 \
-    -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-  add_rule filter FORWARD -i wg9094 -o eth0 -s "$WG_PEER"/32 -p tcp --sport 9094 \
-    -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  add_rule filter FORWARD -i wg9094 -o eth0 -s "$WG_PEER"/32 -p udp --sport 9094 \
-    -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-}
-
-remove_rules() {
-  for proto in tcp udp; do
-    del_rule nat PREROUTING -i eth0 -d "$PUBLIC_IP"/32 -p "$proto" --dport 9094 \
-      -j DNAT --to-destination "$WG_PEER":9094
-    del_rule nat POSTROUTING -o wg9094 -d "$WG_PEER"/32 -p "$proto" --dport 9094 \
-      -j SNAT --to-source "$WG_LOCAL"
-  done
-  del_rule filter FORWARD -i eth0 -o wg9094 -d "$WG_PEER"/32 -p tcp --dport 9094 \
-    -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-  del_rule filter FORWARD -i eth0 -o wg9094 -d "$WG_PEER"/32 -p udp --dport 9094 \
-    -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-  del_rule filter FORWARD -i wg9094 -o eth0 -s "$WG_PEER"/32 -p tcp --sport 9094 \
-    -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-  del_rule filter FORWARD -i wg9094 -o eth0 -s "$WG_PEER"/32 -p udp --sport 9094 \
-    -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-}
-
-case "$action" in
-  start)
-    if [ ! -f /var/lib/icmp9094/ip_forward.original ]; then
-      install -d -m 700 /var/lib/icmp9094
-      sysctl -n net.ipv4.ip_forward > /var/lib/icmp9094/ip_forward.original
-      chmod 600 /var/lib/icmp9094/ip_forward.original
-    fi
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null
-    add_rules
-    logger -t icmp9094-relay 'enabled TCP/UDP 9094 forwarding to Foreign WireGuard endpoint'
-    ;;
-  stop)
-    remove_rules
-    if [ -f /var/lib/icmp9094/ip_forward.original ]; then
-      sysctl -w "net.ipv4.ip_forward=$(cat /var/lib/icmp9094/ip_forward.original)" >/dev/null
-    fi
-    logger -t icmp9094-relay 'removed relay rules and restored ip_forward'
-    ;;
-  *) echo "usage: $0 start|stop" >&2; exit 2 ;;
-esac
+# Backward-compatibility wrapper for iran-9094-relay
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -x "$DIR/iran-9094-relay" ]; then
+  exec "$DIR/iran-9094-relay" "$@"
+elif [ -x /usr/local/sbin/iran-9094-relay ]; then
+  exec /usr/local/sbin/iran-9094-relay "$@"
+else
+  echo "Error: iran-9094-relay not found." >&2
+  exit 1
+fi

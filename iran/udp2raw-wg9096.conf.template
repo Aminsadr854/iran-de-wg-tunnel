@@ -1,12 +1,12 @@
 -c
--l 127.0.0.1:51895
--r <FOREIGN_PUBLIC_IP>:42094
--k <UDP2RAW_SECRET_CARRIER_1>
+-l 127.0.0.1:51891
+-r <FOREIGN_PUBLIC_IP>:42096
+-k <UDP2RAW_SECRET_CARRIER_3>
 --raw-mode icmp
 --cipher-mode xor
 --auth-mode simple
 --source-ip <IRAN_PUBLIC_IP>
---source-port 42094
+--source-port 42096
 --dev eth0
 --log-level 2
 --sock-buf 10240

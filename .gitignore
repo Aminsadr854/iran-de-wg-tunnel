@@ -3,9 +3,22 @@
 *.key
 *.psk
 *.secret
+*.save
 .env
 config.json
 config.json.*
+
+# Temporary, debug, capture, and log files
 *.pcap
 *.log
 *.pid
+*.tmp
+*.zip
+
+# Benchmark, telemetry, and migration scratch files
+benchmark_suite.py
+stability_telemetry.py
+iran-9094-relay.sh
+/backup-*/
+/golden-*/
+/deploy-*/

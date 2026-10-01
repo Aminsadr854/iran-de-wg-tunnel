@@ -1,11 +1,12 @@
 [Interface]
 Address = 10.77.94.1/30
-PrivateKey = <IRAN_WIREGUARD_PRIVATE_KEY>
+ListenPort = 51896
+PrivateKey = <IRAN_WIREGUARD_PRIVATE_KEY_1>
 MTU = 900
 
 [Peer]
-PublicKey = <FOREIGN_WIREGUARD_PUBLIC_KEY>
-PresharedKey = <WIREGUARD_PRESHARED_KEY>
+PublicKey = <FOREIGN_WIREGUARD_PUBLIC_KEY_1>
+PresharedKey = <WIREGUARD_PRESHARED_KEY_1>
 AllowedIPs = 10.77.94.2/32
 Endpoint = 127.0.0.1:51895
 PersistentKeepalive = 25

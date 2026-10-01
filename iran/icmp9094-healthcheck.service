@@ -1,5 +1,5 @@
 [Unit]
-Description=Check wg9094 end-to-end reachability
+Description=Check multi-carrier wg9094/9095/9096 end-to-end reachability
 
 [Service]
 Type=oneshot

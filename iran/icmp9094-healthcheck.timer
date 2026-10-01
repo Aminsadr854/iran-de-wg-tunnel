@@ -1,5 +1,5 @@
 [Unit]
-Description=Periodic wg9094 health check
+Description=Periodic multi-carrier wg9094/9095/9096 health check
 
 [Timer]
 OnBootSec=2min

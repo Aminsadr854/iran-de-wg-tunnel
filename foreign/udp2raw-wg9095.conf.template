@@ -1,7 +1,7 @@
 -s
--l 0.0.0.0:42094
--r 127.0.0.1:51894
--k <UDP2RAW_SECRET_CARRIER_1>
+-l 0.0.0.0:42095
+-r 127.0.0.1:51895
+-k <UDP2RAW_SECRET_CARRIER_2>
 --raw-mode icmp
 --cipher-mode xor
 --auth-mode simple
