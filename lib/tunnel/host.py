@@ -264,3 +264,51 @@ def nat_port_conflict(text,port):
                 except ValueError:
                     return True
     return False
+
+def firewall_audit(port=9094):
+    """Audit system firewall for conflicts on port and check for experimental remnants."""
+    cbtun = False
+    cbgre2 = False
+    conflicts = []
+    if shutil.which('nft'):
+        try:
+            out = run(['nft', 'list', 'tables'], check=False).stdout
+            if 'cbtun' in out:
+                cbtun = True
+                conflicts.append("Rogue nftables table 'cbtun' detected")
+            if 'cbgre2' in out:
+                cbgre2 = True
+                conflicts.append("Rogue nftables table 'cbgre2' detected")
+        except Exception:
+            pass
+    if shutil.which('iptables-save'):
+        try:
+            nat = run(['iptables-save', '-t', 'nat'], check=False).stdout
+            for line in nat.splitlines():
+                if 'cbtun' in line:
+                    cbtun = True
+                if 'cbgre2' in line:
+                    cbgre2 = True
+                if not line.startswith('-A '):
+                    continue
+                if any(x in line for x in ('IT2_DNAT', 'IT2_SNAT', 'icmp-tunnel-owned')):
+                    continue
+                args = shlex.split(line)
+                if '-j' in args and args[args.index('-j')+1] in ('DNAT', 'REDIRECT'):
+                    selectors = [args[i+1] for i, a in enumerate(args[:-1]) if a in ('--dport', '--dports', '--destination-port', '--destination-ports')]
+                    for selector in selectors:
+                        for part in selector.split(','):
+                            ends = part.split(':')
+                            try:
+                                if (len(ends) == 1 and int(ends[0]) == port) or (len(ends) == 2 and int(ends[0] or 0) <= port <= int(ends[1] or 65535)):
+                                    conflicts.append(f"Conflicting iptables NAT rule on port {port}: {line}")
+                            except ValueError:
+                                pass
+        except Exception:
+            pass
+    return {
+        'cbtun': 'FOUND' if cbtun else 'NONE',
+        'cbgre2': 'FOUND' if cbgre2 else 'NONE',
+        'conflicts': conflicts,
+        'passed': len(conflicts) == 0 and not cbtun and not cbgre2
+    }

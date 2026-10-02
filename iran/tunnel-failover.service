@@ -1,0 +1,16 @@
+[Unit]
+Description=Multi-Carrier Tunnel Availability Hardening and Endpoint Failover Daemon
+After=network-online.target iran-9094-relay.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/tunnel-failover-engine.py daemon
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=65535
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

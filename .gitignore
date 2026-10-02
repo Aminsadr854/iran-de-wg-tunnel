@@ -21,3 +21,9 @@ diagnostics*
 runtime/
 __pycache__/
 *.pyc
+backup-*/
+golden-baseline-*/
+deploy-*/
+benchmark_*.py
+stability_*.py
+iran-9094-relay.sh

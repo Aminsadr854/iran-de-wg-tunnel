@@ -143,7 +143,18 @@ sudo sh -c 'umask 077; tunnelctl diagnostics > /root/tunnel-diagnostics.txt'
 
 Review IP addresses and topology before sharing. Raw udp2raw stdout/stderr are suppressed because upstream argument parsing can log secrets. Systemd lifecycle records, interface counters, exit states and health results remain available through the CLI. Logging is bounded through journald; there are no accumulating application log files.
 
-Health runs every minute with jitter. Self-healing is off by default; set `SELF_HEAL=yes` before install to enable it. Recovery requires at least three consecutive failures by default, observes a 300-second per-carrier cooldown, restarts at most one carrier per run, and caps attempts at three per carrier per hour. Missing shared firewall/sysctl state prevents automatic carrier restarts. Lost peer connectivity is not proof that a local restart can fix the path. Existing flows on a dead carrier can fail; new-flow failover is not implemented.
+Health runs every minute with jitter. Self-healing is off by default; set `SELF_HEAL=yes` before install to enable it. Recovery requires at least three consecutive failures by default, observes a 300-second per-carrier cooldown, restarts at most one carrier per run, and caps attempts at three per carrier per hour. Missing shared firewall/sysctl state prevents automatic carrier restarts. Lost peer connectivity is not proof that a local restart can fix the path.
+
+### Multi-Endpoint Availability & Automatic Failover
+
+Release 2 includes automated endpoint failover to protect against upstream transit impairment isolating a primary Foreign carrier IP:
+- Configurable multiple Foreign endpoints via `PRIMARY_FOREIGN_ENDPOINT`, `SECONDARY_FOREIGN_ENDPOINT`, or `FOREIGN_ENDPOINTS`.
+- Layered health monitoring (host reachability, ICMP carrier reachability, udp2raw health, WireGuard handshakes, and application port).
+- Failure classification differentiating local service crashes, routing failures, and firewall conflicts from remote endpoint failures.
+- Conservative thresholds (3 consecutive failures), failover cooldown (300s), and failback hysteresis (5 successful checks).
+- Zero client-side configuration changes (Iran public application port remains identical).
+- Management via `tunnelctl endpoint [list|check|switch]`, `tunnelctl failover [enable|disable|auto-failback]`, and `tunnelctl firewall check`.
+See [High-Availability & Failover Documentation](docs/failover.md).
 
 ## Upgrade, backup, restore and uninstall
 

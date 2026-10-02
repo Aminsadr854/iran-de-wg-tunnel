@@ -1,0 +1,33 @@
+# /etc/iran-de-tunnel/failover.conf
+# Endpoint Failover & Availability Hardening Configuration (Release 2)
+
+# Primary and secondary Foreign endpoints (Public IPv4)
+PRIMARY_FOREIGN_ENDPOINT="__PRIMARY_FOREIGN_ENDPOINT__"
+SECONDARY_FOREIGN_ENDPOINT="__SECONDARY_FOREIGN_ENDPOINT__"
+
+# Space-separated list of all administrator-configured candidate Foreign endpoints
+FOREIGN_ENDPOINTS="__PRIMARY_FOREIGN_ENDPOINT__ __SECONDARY_FOREIGN_ENDPOINT__"
+
+# Failover automation controls
+AUTO_FAILOVER="yes"
+AUTO_FAILBACK="no"
+
+# Failure detection thresholds (consecutive check counts)
+FAILURE_THRESHOLD="3"
+RECOVERY_THRESHOLD="5"
+
+# Cooldown duration after failover (seconds) to prevent flapping
+FAILOVER_COOLDOWN="300"
+
+# Health monitoring interval (seconds)
+CHECK_INTERVAL="15"
+
+# WireGuard handshake staleness threshold (seconds)
+HANDSHAKE_STALE_SEC="100"
+
+# Public application port to monitor for firewall conflicts
+APP_PORT="9094"
+
+# Managed carrier interfaces, internal gateways, and udp2raw listen ports
+CARRIERS="wg9094:10.77.94.2:42094 wg9095:10.77.95.2:42095 wg9096:10.77.96.2:42096"
+UDP2RAW_CONF_DIR="/etc/udp2raw"

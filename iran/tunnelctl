@@ -1,0 +1,29 @@
+#!/bin/bash
+# Multi-Carrier Tunnel Control & Failover CLI (Iran Gateway)
+# Usage:
+#   tunnelctl status
+#   tunnelctl endpoint list
+#   tunnelctl endpoint check
+#   tunnelctl endpoint switch <primary|secondary|IP>
+#   tunnelctl failover status
+#   tunnelctl failover enable
+#   tunnelctl failover disable
+#   tunnelctl failover auto-failback <enable|disable>
+#   tunnelctl firewall check
+
+set -euo pipefail
+
+ENGINE="/usr/local/sbin/tunnel-failover-engine.py"
+
+if [ ! -x "$ENGINE" ]; then
+    # Fallback to local script in script directory
+    DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -x "$DIR/tunnel-failover-engine.py" ]; then
+        ENGINE="$DIR/tunnel-failover-engine.py"
+    else
+        echo "Error: tunnel-failover-engine.py not found at $ENGINE or $DIR" >&2
+        exit 1
+    fi
+fi
+
+exec "$ENGINE" "$@"

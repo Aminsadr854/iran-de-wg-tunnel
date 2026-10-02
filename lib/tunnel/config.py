@@ -10,8 +10,11 @@ from pathlib import Path
 class Error(Exception):
     """An actionable, safe-to-display operational error."""
 
-DEFAULTS = dict(ROLE='foreign', FOREIGN_PUBLIC_IP='', PUBLIC_LISTEN_PORT=9094,
-                APPLICATION_PORT=9094, CARRIER_COUNT=3, WIREGUARD_MTU=900,
+DEFAULTS = dict(ROLE='foreign', FOREIGN_PUBLIC_IP='',
+                PRIMARY_FOREIGN_ENDPOINT='', SECONDARY_FOREIGN_ENDPOINT='', FOREIGN_ENDPOINTS='',
+                AUTO_FAILOVER='yes', AUTO_FAILBACK='no',
+                FAILURE_THRESHOLD=3, RECOVERY_THRESHOLD=5, FAILOVER_COOLDOWN=300,
+                PUBLIC_LISTEN_PORT=9094, APPLICATION_PORT=9094, CARRIER_COUNT=3, WIREGUARD_MTU=900,
                 CARRIER_PORT_BASE=42094, WG_PORT_BASE=51894, LOCAL_PORT_BASE=53894,
                 TUNNEL_NETWORK='10.203.0.0/24', NETWORK_INTERFACE='', CPU_AFFINITY='yes',
                 SELF_HEAL='no', HEALTH_FAILURES=3, HEALTH_COOLDOWN=300,
@@ -67,19 +70,21 @@ def validate(values, require_public=True):
                   CARRIER_COUNT=(1,8), WIREGUARD_MTU=(576,1420),
                   CARRIER_PORT_BASE=(1024,65528), WG_PORT_BASE=(1024,65528),
                   LOCAL_PORT_BASE=(1024,65528), HEALTH_FAILURES=(2,20),
-                  HEALTH_COOLDOWN=(60,86400), HANDSHAKE_MAX_AGE=(120,86400))
+                  HEALTH_COOLDOWN=(60,86400), HANDSHAKE_MAX_AGE=(120,86400),
+                  FAILURE_THRESHOLD=(2,20), RECOVERY_THRESHOLD=(2,20),
+                  FAILOVER_COOLDOWN=(60,86400))
     for k, (lo, hi) in limits.items():
         if isinstance(c[k], bool) or not re.fullmatch(r'[0-9]+', str(c[k])):
             raise Error(f'{k} must be an integer.')
         c[k] = int(c[k])
         if not lo <= c[k] <= hi:
             raise Error(f'{k} is out of range ({lo}..{hi}).')
-    for k in ('CPU_AFFINITY','SELF_HEAL'):
+    for k in ('CPU_AFFINITY','SELF_HEAL','AUTO_FAILOVER','AUTO_FAILBACK'):
         if c[k] not in ('yes','no'):
             raise Error(f'{k} must be yes or no.')
     if not isinstance(c['NETWORK_INTERFACE'], str) or (c['NETWORK_INTERFACE'] and not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,15}', c['NETWORK_INTERFACE'])):
         raise Error('Invalid network interface name.')
-    for k in ('PEER_FILE','FOREIGN_PUBLIC_IP','TUNNEL_NETWORK'):
+    for k in ('PEER_FILE','FOREIGN_PUBLIC_IP','TUNNEL_NETWORK','PRIMARY_FOREIGN_ENDPOINT','SECONDARY_FOREIGN_ENDPOINT','FOREIGN_ENDPOINTS'):
         if not isinstance(c[k], str):
             raise Error(f'{k} must be text.')
     try:
@@ -96,8 +101,34 @@ def validate(values, require_public=True):
         raise Error('WireGuard Iran listen ports exceed 65535 (WG_PORT_BASE + 1000).')
     if len(set(ports)) != len(ports) or c['PUBLIC_LISTEN_PORT'] in ports or c['APPLICATION_PORT'] in ports:
         raise Error('Carrier, WireGuard, loopback and application ports must not overlap.')
-    if c['FOREIGN_PUBLIC_IP']:
+
+    # Endpoint and multi-endpoint failover resolution
+    endpoints = []
+    if c['FOREIGN_ENDPOINTS'] and (not c['FOREIGN_PUBLIC_IP'] or c['FOREIGN_PUBLIC_IP'] == c['FOREIGN_ENDPOINTS'].split()[0]):
+        raw_eps = [x.strip() for x in re.split(r'[,\s]+', c['FOREIGN_ENDPOINTS']) if x.strip()]
+        endpoints = [ipv4(x, public=require_public) for x in raw_eps]
+        if not endpoints:
+            raise Error('FOREIGN_ENDPOINTS must contain at least one valid IPv4 address.')
+    else:
+        if c['FOREIGN_PUBLIC_IP']:
+            endpoints.append(ipv4(c['FOREIGN_PUBLIC_IP'], public=require_public))
+        elif c['PRIMARY_FOREIGN_ENDPOINT']:
+            endpoints.append(ipv4(c['PRIMARY_FOREIGN_ENDPOINT'], public=require_public))
+        if c['SECONDARY_FOREIGN_ENDPOINT']:
+            sec = ipv4(c['SECONDARY_FOREIGN_ENDPOINT'], public=require_public)
+            if sec not in endpoints:
+                endpoints.append(sec)
+
+    if endpoints:
+        c['FOREIGN_ENDPOINTS'] = ' '.join(endpoints)
+        c['FOREIGN_PUBLIC_IP'] = endpoints[0]
+        c['PRIMARY_FOREIGN_ENDPOINT'] = endpoints[0]
+        if len(endpoints) > 1 and not c['SECONDARY_FOREIGN_ENDPOINT']:
+            c['SECONDARY_FOREIGN_ENDPOINT'] = endpoints[1]
+    elif c['FOREIGN_PUBLIC_IP']:
         c['FOREIGN_PUBLIC_IP'] = ipv4(c['FOREIGN_PUBLIC_IP'], public=require_public)
+        c['PRIMARY_FOREIGN_ENDPOINT'] = c['FOREIGN_PUBLIC_IP']
+        c['FOREIGN_ENDPOINTS'] = c['FOREIGN_PUBLIC_IP']
     elif require_public:
         raise Error('Set FOREIGN_PUBLIC_IP to the reachable Foreign server IPv4 address.')
     return c

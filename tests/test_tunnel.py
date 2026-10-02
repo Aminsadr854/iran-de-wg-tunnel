@@ -49,6 +49,23 @@ class ConfigTests(unittest.TestCase):
                 config.validate({**conf(),**vals})
         self.assertEqual(config.validate({'FOREIGN_PUBLIC_IP':'1.1.1.1'})['CARRIER_COUNT'],3)
 
+    def test_failover_and_multi_endpoint_validation(self):
+        c = config.validate({'ROLE': 'iran', 'FOREIGN_ENDPOINTS': '1.1.1.1, 8.8.8.8'}, require_public=True)
+        self.assertEqual(c['PRIMARY_FOREIGN_ENDPOINT'], '1.1.1.1')
+        self.assertEqual(c['SECONDARY_FOREIGN_ENDPOINT'], '8.8.8.8')
+        self.assertEqual(c['FOREIGN_PUBLIC_IP'], '1.1.1.1')
+        self.assertEqual(c['FOREIGN_ENDPOINTS'], '1.1.1.1 8.8.8.8')
+
+        c2 = config.validate({'ROLE': 'iran', 'PRIMARY_FOREIGN_ENDPOINT': '1.1.1.1', 'SECONDARY_FOREIGN_ENDPOINT': '8.8.8.8'}, require_public=True)
+        self.assertEqual(c2['FOREIGN_ENDPOINTS'], '1.1.1.1 8.8.8.8')
+
+        for vals in ({'AUTO_FAILOVER': 'maybe'}, {'AUTO_FAILBACK': 'sure'},
+                     {'FAILURE_THRESHOLD': 1}, {'FAILURE_THRESHOLD': 25},
+                     {'RECOVERY_THRESHOLD': 1}, {'RECOVERY_THRESHOLD': 25},
+                     {'FAILOVER_COOLDOWN': 10}, {'FAILOVER_COOLDOWN': 100000}):
+            with self.subTest(vals=vals), self.assertRaises(config.Error):
+                config.validate({**conf(), **vals})
+
     def test_layout_and_mtu(self):
         c=conf(); xs=config.layout(c)
         self.assertEqual([x['name'] for x in xs],['wg9094','wg9095','wg9096'])

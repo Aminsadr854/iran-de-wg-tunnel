@@ -289,6 +289,20 @@ def status(s):
             print('  WireGuard interface: DOWN (missing)')
     for unit in ('icmp-tunnel-firewall.service','icmp-tunnel-health.timer'):
         print(unit+': '+host.run(['systemctl','is-active',unit],check=False).stdout.strip())
+    if c['ROLE'] == 'iran':
+        endpoints = c.get('FOREIGN_ENDPOINTS', '').split()
+        if endpoints:
+            active_ep = c.get('FOREIGN_PUBLIC_IP', '')
+            print(f'Active Foreign endpoint: {active_ep}')
+            tags = []
+            for ep in endpoints:
+                tag = 'primary' if ep == c.get('PRIMARY_FOREIGN_ENDPOINT') else ('secondary' if ep == c.get('SECONDARY_FOREIGN_ENDPOINT') else 'candidate')
+                marker = ' [ACTIVE]' if ep == active_ep else ''
+                tags.append(f'{ep} ({tag}){marker}')
+            print('Configured Foreign endpoints: ' + ', '.join(tags))
+            print(f'Auto failover: {c.get("AUTO_FAILOVER", "yes")} | Auto failback: {c.get("AUTO_FAILBACK", "no")} | Cooldown: {c.get("FAILOVER_COOLDOWN", 300)}s')
+    audit = host.firewall_audit(c['PUBLIC_LISTEN_PORT'])
+    print(f'Firewall conflict status: {"PASS" if audit["passed"] else "FAIL"} | cbtun: {audit["cbtun"]} | cbgre2: {audit["cbgre2"]}')
 
 def sysctl_healthy():
     return all(' '.join(host.run(['sysctl','-n',k],check=False).stdout.split())==v for k,v in SYSCTL.items())
@@ -524,6 +538,127 @@ def uninstall(s,delete_secrets=False,yes=False):
     cleanup(s)
     print('Project removed. Distribution packages and secret backups retained. Unrelated services/firewall policies unchanged.')
 
+def endpoint_list(s):
+    c = s['config']
+    active = c.get('FOREIGN_PUBLIC_IP', '')
+    endpoints = c.get('FOREIGN_ENDPOINTS', '').split()
+    print('Configured Foreign Endpoints:')
+    for ep in endpoints:
+        tag = 'primary' if ep == c.get('PRIMARY_FOREIGN_ENDPOINT') else ('secondary' if ep == c.get('SECONDARY_FOREIGN_ENDPOINT') else 'candidate')
+        marker = ' [ACTIVE]' if ep == active else ''
+        print(f'  {ep} ({tag}){marker}')
+
+def endpoint_check(s):
+    c = s['config']
+    endpoints = c.get('FOREIGN_ENDPOINTS', '').split()
+    print('Checking reachability of configured Foreign endpoints:')
+    for ep in endpoints:
+        p = host.run(['ping', '-n', '-q', '-c', '1', '-W', '2', ep], check=False, timeout=5)
+        print(f'  {ep}: {"REACHABLE" if p.returncode == 0 else "UNREACHABLE"}')
+
+def endpoint_switch(s, target):
+    c = s['config']
+    endpoints = c.get('FOREIGN_ENDPOINTS', '').split()
+    if target.lower() == 'primary':
+        target = c.get('PRIMARY_FOREIGN_ENDPOINT', endpoints[0] if endpoints else '')
+    elif target.lower() == 'secondary':
+        target = c.get('SECONDARY_FOREIGN_ENDPOINT', endpoints[1] if len(endpoints) > 1 else '')
+    if not target or target not in endpoints:
+        raise Error(f'Target {target} is not in configured FOREIGN_ENDPOINTS ({endpoints}).')
+    print(f'Staged migration of carriers to Foreign endpoint {target}...')
+    c['FOREIGN_PUBLIC_IP'] = target
+    s['config'] = c
+    for i, x in enumerate(s['carriers'], 1):
+        raw_conf = host.ETC / 'raw' / f'{x["name"]}.conf'
+        if raw_conf.exists():
+            lines = raw_conf.read_text().splitlines()
+            new_lines = []
+            for line in lines:
+                if line.startswith('-r '):
+                    port = line.split(':')[1] if ':' in line else str(x['raw_port'])
+                    new_lines.append(f'-r {target}:{port}')
+                else:
+                    new_lines.append(line)
+            write_text(raw_conf, '\n'.join(new_lines) + '\n')
+            restart_carrier(s, i)
+            print(f'Carrier {x["name"]}: migrated to {target}.')
+    write_json(STATE, s)
+    print(f'Successfully switched active Foreign endpoint to {target}.')
+
+def failover_control(s, action, value=None):
+    c = s['config']
+    if action == 'enable':
+        c['AUTO_FAILOVER'] = 'yes'
+        s['config'] = c
+        write_json(STATE, s)
+        print('Automated failover ENABLED.')
+    elif action == 'disable':
+        c['AUTO_FAILOVER'] = 'no'
+        s['config'] = c
+        write_json(STATE, s)
+        print('Automated failover DISABLED.')
+    elif action in ('auto-failback', 'autofailback'):
+        val = 'yes' if value in ('on', 'enable', 'yes', 'true') else 'no'
+        c['AUTO_FAILBACK'] = val
+        s['config'] = c
+        write_json(STATE, s)
+        print(f'Auto failback set to {val}.')
+    else:
+        print(f'Auto Failover: {c.get("AUTO_FAILOVER", "yes")}')
+        print(f'Auto Failback: {c.get("AUTO_FAILBACK", "no")}')
+        print(f'Failure Threshold: {c.get("FAILURE_THRESHOLD", 3)}')
+        print(f'Recovery Threshold: {c.get("RECOVERY_THRESHOLD", 5)}')
+        print(f'Cooldown: {c.get("FAILOVER_COOLDOWN", 300)}s')
+
+def failover_daemon(s):
+    print('Starting ICMP Tunnel Failover Daemon...')
+    failures = 0
+    while True:
+        try:
+            s = load_state()
+            c = s['config']
+            endpoints = c.get('FOREIGN_ENDPOINTS', '').split()
+            if len(endpoints) <= 1 or c.get('AUTO_FAILOVER') != 'yes':
+                time.sleep(15)
+                continue
+            active = c.get('FOREIGN_PUBLIC_IP', endpoints[0])
+            stale_count = 0
+            for x in s['carriers']:
+                out = host.run(['wg', 'show', x['name'], 'latest-handshakes'], check=False).stdout.splitlines()
+                stamps = [int(r.split()[-1]) for r in out if r.split()[-1].isdigit()]
+                if not stamps or not max(stamps) or time.time() - max(stamps) > int(c.get('HANDSHAKE_MAX_AGE', 180)):
+                    stale_count += 1
+            if stale_count == len(s['carriers']):
+                failures += 1
+                if failures >= int(c.get('FAILURE_THRESHOLD', 3)):
+                    candidates = [ep for ep in endpoints if ep != active]
+                    for cand in candidates:
+                        p = host.run(['ping', '-n', '-q', '-c', '1', '-W', '2', cand], check=False, timeout=5)
+                        if p.returncode == 0:
+                            print(f'Active endpoint {active} failed ({failures} consecutive checks). Failing over to {cand}...')
+                            endpoint_switch(s, cand)
+                            failures = 0
+                            time.sleep(int(c.get('FAILOVER_COOLDOWN', 300)))
+                            break
+            else:
+                failures = 0
+        except Exception as e:
+            print(f'Error in failover cycle: {e}', file=sys.stderr)
+        time.sleep(15)
+
+def firewall_check(s):
+    port = s['config']['PUBLIC_LISTEN_PORT']
+    audit = host.firewall_audit(port)
+    print('FIREWALL CONFLICT AUDIT:')
+    print(f'  PUBLIC LISTEN PORT ({port}) OWNERSHIP: {"PASS" if audit["passed"] else "FAIL"}')
+    print(f'  CBTUN REMNANTS: {audit["cbtun"]}')
+    print(f'  CBGRE2 REMNANTS: {audit["cbgre2"]}')
+    print(f'  FIREWALL CONFLICT DETECTION: {"PASS" if audit["passed"] else "FAIL"}')
+    if audit['conflicts']:
+        print('Conflicts found:')
+        for c in audit['conflicts']:
+            print(f'    - {c}')
+
 def plan(c):
     print(f'DRY RUN: no keys generated, files written, services started, kernel modules loaded or network state changed. Version {version()}')
     print(json.dumps(c,indent=2))
@@ -585,7 +720,9 @@ def choose_install(args):
     if vals.get('ROLE','foreign')=='iran' and vals.get('PEER_FILE'):
         peer_c,pair=load_pair(vals['PEER_FILE'])
         for k,v in vals.items():
-            if k not in ('ROLE','PEER_FILE','NETWORK_INTERFACE','CPU_AFFINITY','SELF_HEAL','HEALTH_FAILURES','HEALTH_COOLDOWN','HANDSHAKE_MAX_AGE') and str(v)!=str(peer_c[k]):
+            if k not in ('ROLE','PEER_FILE','NETWORK_INTERFACE','CPU_AFFINITY','SELF_HEAL','HEALTH_FAILURES','HEALTH_COOLDOWN','HANDSHAKE_MAX_AGE',
+                         'PRIMARY_FOREIGN_ENDPOINT','SECONDARY_FOREIGN_ENDPOINT','FOREIGN_ENDPOINTS',
+                         'AUTO_FAILOVER','AUTO_FAILBACK','FAILURE_THRESHOLD','RECOVERY_THRESHOLD','FAILOVER_COOLDOWN') and str(v)!=str(peer_c.get(k, '')):
                 raise Error(f'{k} conflicts with paired Foreign configuration.')
         vals={**peer_c,**vals}
     elif vals.get('ROLE')=='iran' and not (args.dry_run and args.offline):
@@ -597,8 +734,9 @@ def choose_install(args):
 def main(argv=None):
     os.umask(0o077)
     parser=argparse.ArgumentParser(description='Portable multi-carrier WireGuard-over-ICMP tunnel installer/manager')
-    parser.add_argument('command',nargs='?',default='status',choices=['install','status','health','repair','upgrade','uninstall','version','restart','restart-carrier','logs','diagnostics','config','export-peer','import-peer','backup','restore','_firewall','_render'])
+    parser.add_argument('command',nargs='?',default='status',choices=['install','status','health','repair','upgrade','uninstall','version','restart','restart-carrier','logs','diagnostics','config','export-peer','import-peer','backup','restore','_firewall','_render','endpoint','failover','firewall'])
     parser.add_argument('argument',nargs='?')
+    parser.add_argument('extra',nargs='*')
     parser.add_argument('--role',choices=['foreign','iran'])
     parser.add_argument('--config')
     parser.add_argument('--peer')
@@ -686,6 +824,37 @@ def main(argv=None):
                 host.firewall_stop()
             else:
                 raise Error('Internal firewall action must be start or stop.')
+        elif command=='endpoint':
+            sub = args.argument or 'list'
+            if sub == 'list':
+                endpoint_list(s)
+            elif sub == 'check':
+                endpoint_check(s)
+            elif sub == 'switch':
+                if not args.extra:
+                    raise Error('Usage: tunnelctl endpoint switch <primary|secondary|IP>')
+                endpoint_switch(s, args.extra[0])
+            else:
+                raise Error(f'Unknown endpoint command: {sub}. Valid: list, check, switch')
+        elif command=='failover':
+            sub = args.argument or 'status'
+            if sub in ('enable', 'disable'):
+                failover_control(s, sub)
+            elif sub in ('auto-failback', 'autofailback'):
+                val = args.extra[0] if args.extra else 'on'
+                failover_control(s, 'auto-failback', val)
+            elif sub == 'status':
+                failover_control(s, 'status')
+            elif sub == 'daemon':
+                failover_daemon(s)
+            else:
+                raise Error(f'Unknown failover command: {sub}. Valid: enable, disable, auto-failback, status, daemon')
+        elif command=='firewall':
+            sub = args.argument or 'check'
+            if sub == 'check':
+                firewall_check(s)
+            else:
+                raise Error(f'Unknown firewall command: {sub}. Valid: check')
         return 0
     except (Error,KeyboardInterrupt) as e:
         print(f'ERROR: {str(e) if isinstance(e,Error) else "Interrupted."}',file=sys.stderr)

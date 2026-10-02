@@ -176,4 +176,24 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 '''
+    if c['ROLE'] == 'iran' and len(c.get('FOREIGN_ENDPOINTS', '').split()) > 1:
+        units['icmp-tunnel-failover.service'] = '''[Unit]
+Description=ICMP Tunnel automated endpoint failover daemon
+Wants=network-online.target
+After=network-online.target icmp-tunnel-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tunnelctl failover daemon
+Restart=always
+RestartSec=15
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+'''
     return units
