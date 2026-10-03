@@ -71,7 +71,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([x['name'] for x in xs],['wg9094','wg9095','wg9096'])
         self.assertEqual([x['raw_port'] for x in xs],[42094,42095,42096])
         self.assertEqual([x['foreign_ip'] for x in xs],['10.203.0.2','10.203.0.6','10.203.0.10'])
-        self.assertEqual(c['WIREGUARD_MTU'],900)
+        self.assertEqual(c['WIREGUARD_MTU'],1360)
         for role in ('iran','foreign'):
             c=conf(role); c.update(NETWORK_INTERFACE='ens3',LOCAL_IP='192.0.2.1')
             x=fake_carriers(c)[0]
@@ -79,6 +79,8 @@ class ConfigTests(unittest.TestCase):
             self.assertIn('Table = off',wg)
             self.assertIn('AllowedIPs = '+('10.203.0.2' if role=='iran' else '10.203.0.1')+'/32',wg)
             self.assertNotIn('0.0.0.0/0',wg)
+            if role == 'iran':
+                self.assertIn('PersistentKeepalive = 15', wg)
             for opt in ('--raw-mode icmp','--cipher-mode xor','--auth-mode simple','--sock-buf 10240','--force-sock-buf','--log-level 2'):
                 self.assertIn(opt,render.udp2raw(c,x))
 
@@ -368,7 +370,8 @@ class LifecycleTests(unittest.TestCase):
                     self.assertEqual(manager.STATE.stat().st_mode&0o777,0o600)
                     self.assertEqual(manager.PAIR.exists(),role=='foreign')
                     for x in xs:
-                        self.assertEqual((host.ETC/'wg'/f'{x['name']}.conf').stat().st_mode&0o777,0o600)
+                        name=x['name']
+                        self.assertEqual((host.ETC/'wg'/f'{name}.conf').stat().st_mode&0o777,0o600)
 
     def test_backup_restore_roundtrip_keeps_current_host_original_sysctl(self):
         p=self.root/'backup.tar.gz'
@@ -384,10 +387,12 @@ class LifecycleTests(unittest.TestCase):
 
     def test_upgrade_preserves_identity_and_takes_backup_first(self):
         order=[]
-        with patch('tunnel.host.preflight'),patch('tunnel.manager.backup',side_effect=lambda:order.append('backup')),patch('tunnel.manager.transactional_update',side_effect=lambda s,source,rebuild=False:order.append(('update',s,rebuild))):
+        self.s['config']['WIREGUARD_MTU'] = 900
+        with patch('tunnel.host.preflight'),patch('tunnel.manager.backup',side_effect=lambda:order.append('backup')),patch('tunnel.manager.transactional_update',side_effect=lambda s,source,rebuild=False,pair_bundle=None:order.append(('update',s,rebuild))):
             manager.upgrade(self.s,manager.ROOT)
         self.assertEqual(order[0],'backup')
         self.assertEqual(order[1][1]['carriers'],self.s['carriers'])
+        self.assertEqual(order[1][1]['config']['WIREGUARD_MTU'],1360)
         self.assertTrue(order[1][2])
 
     def test_sysctl_tab_whitespace_healthy(self):

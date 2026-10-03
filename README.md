@@ -185,13 +185,19 @@ Failed new installation removes owned interfaces/units/rules/configuration and c
 
 ## Performance reference
 
-| Historical sustained benchmark | Result |
+| Production Benchmark Observation | Result |
 | --- | --- |
-| 60 seconds | 129.24 Mbps |
-| 5 minutes | 113.97 Mbps |
-| 10 minutes | 120.51 Mbps |
+| 10-minute sustained average | **130.17 Mbps** |
+| Peak throughput | **195.89 Mbps** |
+| Single-flow TCP | 56 – 61 Mbps |
+| 4-flow parallel aggregate | 144 – 145 Mbps |
+| Idle carrier RTT | ~112 ms |
+| Loaded carrier RTT | ~168 ms |
+| Post-load UDP DNS | 50/50 successful (0% loss) |
 
-These are user-supplied **production reference measurements**, not portable-installer test results or guarantees. CPU, provider ICMP handling, routing, RTT, loss, virtualization and network conditions dominate performance. A single flow uses a single carrier; aggregate parallel-flow throughput can exceed that of one raw process. Keep MTU 900 unless intentionally testing alternatives. BBR/fq and socket tuning are installed without automatic aggressive MTU/performance experiments. [Historical benchmark notes](docs/history/benchmarks.md).
+These are **production reference observations**, not portable-installer test guarantees. CPU capacity, provider ICMP handling, routing, transit RTT, packet loss, virtualization, and intermediate network conditions dominate performance. A single flow uses a single carrier (preserving TCP affinity); aggregate parallel-flow throughput utilizes multiple carriers simultaneously.
+
+The production configuration uses verified MTU 1360 with dynamic PMTU-aware clamping (`--clamp-mss-to-pmtu`), PersistentKeepalive 15, BBR+fq, and 16 MB socket buffers. (If an intermediate path impairs ICMP frames larger than 900 bytes, `WIREGUARD_MTU` can be configured back to 900). See [benchmark notes](docs/history/benchmarks.md).
 
 ## Troubleshooting and limitations
 

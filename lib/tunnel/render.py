@@ -36,6 +36,9 @@ def firewall_rules(c, carriers):
             for proto in ('tcp','udp'):
                 add('filter','IT2_INPUT','-i',x['name'],'-d',x['foreign_ip'],'-p',proto,
                     '--dport',c['APPLICATION_PORT'],'-j','ACCEPT')
+            for direction in ('-i','-o'):
+                add('mangle','IT2_MSS',direction,x['name'],'-p','tcp','--tcp-flags','SYN,RST','SYN',
+                    '-j','TCPMSS','--clamp-mss-to-pmtu')
     if c['ROLE']=='iran':
         for proto in ('tcp','udp'):
             for i,x in enumerate(carriers):
@@ -77,7 +80,7 @@ PresharedKey = {x['psk']}
 AllowedIPs = {peer}/32
 '''
     if not foreign:
-        result += f'Endpoint = 127.0.0.1:{x["local_port"]}\nPersistentKeepalive = 25\n'
+        result += f'Endpoint = 127.0.0.1:{x["local_port"]}\nPersistentKeepalive = 15\n'
     return result
 
 def udp2raw(c,x):

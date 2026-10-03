@@ -9,7 +9,7 @@ The example contains documentation addresses, not production addresses. A live i
 | PUBLIC_LISTEN_PORT | 9094, Iran TCP/UDP public endpoint |
 | APPLICATION_PORT | 9094, Foreign application's TCP/UDP listener |
 | CARRIER_COUNT | 3; 1–8 permitted explicitly, above three experimental |
-| WIREGUARD_MTU | 900 recommended; 576–1420 accepted for deliberate experiments |
+| WIREGUARD_MTU | 1360 production verified; 576–1420 accepted (fallback to 900 if intermediate transit impairs large ICMP frames) |
 | CARRIER_PORT_BASE | 42094; identifier/reserved UDP ports increment per carrier |
 | WG_PORT_BASE | 51894 Foreign; Iran uses base + 1000; both increment per carrier |
 | LOCAL_PORT_BASE | 53894 Iran udp2raw loopback listener; increments per carrier |
@@ -19,7 +19,7 @@ The example contains documentation addresses, not production addresses. A live i
 | SELF_HEAL | no; yes enables bounded independent carrier recovery |
 | HEALTH_FAILURES | 3 consecutive unhealthy checks; range 2–20 |
 | HEALTH_COOLDOWN | 300 seconds; range 60–86400, plus three attempts/hour cap |
-| HANDSHAKE_MAX_AGE | 180 seconds; range 120–86400; keepalive is 25 seconds on Iran |
+| HANDSHAKE_MAX_AGE | 180 seconds; range 120–86400; keepalive is 15 seconds on Iran |
 | PEER_FILE | Iran secret pairing JSON path, absolute path recommended |
 
 Names are fixed `wg9094` onward. The network allocator assigns Iran/Foreign addresses at offsets 1/2 in each consecutive /30; the unused portions of the CIDR are not routed. Preflight checks the used subnets against every route table and address, not only the global default. Port ranges must be nonoverlapping, including Iran's derived WireGuard range and the application ports.

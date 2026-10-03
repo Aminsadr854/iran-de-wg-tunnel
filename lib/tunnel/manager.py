@@ -476,10 +476,23 @@ def upgrade(s,source):
     import re
     if not re.fullmatch(r'2\.\d+\.\d+',new_version):
         raise Error('Only compatible Release 2 upgrades are supported; major upgrades need a migration.')
-    host.preflight(s['config'],existing=True)
+    new_config = dict(s['config'])
+    if new_config.get('WIREGUARD_MTU') == 900:
+        print('Upgrading WireGuard MTU from legacy default (900) to production-verified standard (1360).')
+        new_config['WIREGUARD_MTU'] = 1360
+    host.preflight(new_config,existing=True)
     backup()
-    updated={**s,'version':new_version}
-    transactional_update(updated,source,rebuild=True)
+    pair_bundle = None
+    if PAIR.exists() and s['config']['ROLE'] == 'foreign':
+        try:
+            pair_bundle = json.loads(private_file(PAIR).read_text())
+            if pair_bundle.get('config', {}).get('WIREGUARD_MTU') == 900:
+                pair_bundle['config']['WIREGUARD_MTU'] = 1360
+        except Exception:
+            pair_bundle = None
+    updated={**s,'version':new_version,'config':new_config}
+    transactional_update(updated,source,rebuild=True,pair_bundle=pair_bundle)
+    print(f'Upgraded to v{new_version}; WireGuard MTU set to {new_config.get("WIREGUARD_MTU", 1360)}, Keepalive 15s.')
 
 def restore(s,path):
     p=private_file(path)
